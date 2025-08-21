@@ -44,11 +44,15 @@ For each Markdown file:
 Image files with extensions .jpg, .jpeg, .png, .gif, and .webp are synced into the Hugo static images folder (flattened).
 
 The script only copies new or updated files and removes files from the destination that no longer exist in the source.
+
+# update:
+added youtube processing code.
 """
 
 import os
 import re
 import shutil
+from typing import Optional
 
 # === CONFIGURATION: Update these paths to match your system ===
 # The root folder where your Obsidian posts (Markdown and images) reside.
@@ -72,6 +76,79 @@ IMAGE_LINK_PATTERN = re.compile(
 )
 # ================================================================
 
+# -------------------  YouTube video links processor  ------------------------
+
+def extract_youtube_id(url: str) -> Optional[str]:
+    """Return the YouTube ID or None if not found."""
+    if not url:
+        return None
+    url = url.strip()
+    # remove surrounding angle-brackets if present: <https://...>
+    url = url.strip('<>')
+    # watch?v=ID
+    m = re.search(r'[?&]v=([^&\s]+)', url)
+    if m:
+        return m.group(1)
+    # short youtu.be/ID
+    m = re.search(r'youtu\.be/([^?&\s/]+)', url)
+    if m:
+        return m.group(1)
+    # embed path /embed/ID
+    m = re.search(r'youtube\.com/embed/([^?&\s/]+)', url)
+    if m:
+        return m.group(1)
+    return None
+
+
+def convert_youtube_embeds(content: str) -> str:
+    """Convert iframe/URL/markdown links that point to YouTube into {{< youtube ID >}}.
+       If no valid ID is found, leave the original text unchanged.
+    """
+
+    # 1) <iframe src="...youtube..."></iframe>
+    def iframe_repl(m):
+        src = m.group('src').strip()
+        vid = extract_youtube_id(src)
+        if vid:
+            return f"{{{{< youtube {vid} >}}}}"
+        return m.group(0)
+
+    content = re.sub(
+        r'(?is)<iframe[^>]*\s+src=(?P<quote>["\'])(?P<src>[^"\']+)(?P=quote)[^>]*>.*?</iframe>',
+        iframe_repl,
+        content
+    )
+
+    # 2) Markdown image or link that points to a YouTube URL, e.g. ![alt](https://youtu.be/ID) or [text](https://...)
+    def md_link_repl(m):
+        url = m.group('url').strip()
+        vid = extract_youtube_id(url)
+        if vid:
+            return f"{{{{< youtube {vid} >}}}}"
+        return m.group(0)
+
+    content = re.sub(r'!\[.*?\]\((?P<url>https?://[^\)]+)\)', md_link_repl, content)
+    content = re.sub(r'\[.*?\]\((?P<url>https?://[^\)]+)\)', md_link_repl, content)
+
+    # 3) Bare URLs on their own line (optionally wrapped with <>)
+    def bare_url_repl(m):
+        url = m.group(1).strip()
+        url = url.strip('<>')
+        vid = extract_youtube_id(url)
+        if vid:
+            return f"{{{{< youtube {vid} >}}}}"
+        return m.group(0)
+
+    content = re.sub(
+        r'(?m)^[ \t]*<?(https?://(?:www\.)?(?:youtube\.com/watch\?v=[^&\s]+|youtu\.be/[^>\s]+|youtube\.com/embed/[^>\s]+))>?[ \t]*$',
+        bare_url_repl,
+        content
+    )
+
+    return content
+
+# ------------------- End of youtube linke processor  ------------------------
+
 def process_markdown_file(dest_filepath):
     """
     Processes a Markdown file in the destination content folder:
@@ -89,9 +166,14 @@ def process_markdown_file(dest_filepath):
     try:
         with open(dest_filepath, "r", encoding="utf-8") as f:
             content = f.read()
+
     except Exception as e:
         print(f"  Error reading {dest_filepath}: {e}")
         return
+    
+    # convert any YouTube links/iframes into Hugo shortcodes
+    content = convert_youtube_embeds(content)
+    print(content)
 
     # Replacement function for re.sub()
     def repl(match):
