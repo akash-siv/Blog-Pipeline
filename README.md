@@ -1,2 +1,2 @@
 # Blog-Pipeline
-obsidian -- drive -- hugo pipeline script
+obsidian -- google drive -- hugo -- pipeline script
